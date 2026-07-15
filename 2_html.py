@@ -679,14 +679,13 @@ function drawGantt() {{
   // Columnas de dias (fondo alternado claro; dias incompletos en amarillo)
   for (let day=1; day<=maxDay; day++) {{
     const cnt = dayCount.get(day)||0;
-    if (cnt < PARAMS.R) {{
-      gc.fillStyle = 'rgba(255,200,50,0.22)';  // amarillo = dia incompleto
+    if (cnt > 0 && cnt < PARAMS.R) {{
+      gc.fillStyle = 'rgba(255,200,50,0.22)';  // amarillo = dia con trabajo pero incompleto
+      gc.fillRect(dayToX(day-1), G.HDR_H, G.DAY_W, H-G.HDR_H);
     }} else if (day%2===0) {{
       gc.fillStyle = 'rgba(200,220,255,0.12)';
-    }} else {{
-      continue;
+      gc.fillRect(dayToX(day-1), G.HDR_H, G.DAY_W, H-G.HDR_H);
     }}
-    gc.fillRect(dayToX(day-1), G.HDR_H, G.DAY_W, H-G.HDR_H);
   }}
 
   // Grid vertical (dias)
