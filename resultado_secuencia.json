@@ -6,7 +6,8 @@
     "n": 97,
     "solver": "Greedy vecino mas cercano - minimo idle",
     "total_dist": 669.9154,
-    "violations": 0
+    "violations": 0,
+    "generated_at": "2026-07-15 16:48"
   },
   "rows": [
     {

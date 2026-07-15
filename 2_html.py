@@ -235,7 +235,8 @@ const DATA_BY_RANK = [...DATA].sort((a,b) => a.rank - b.rank);
 // ---- Header ----
 document.getElementById('params').innerHTML =
   `D critica: ${{PARAMS.D}} m &nbsp;|&nbsp; Espera: ${{PARAMS.T}} dia(s) &nbsp;|&nbsp; Ritmo: ${{PARAMS.R}} huecos/dia<br>` +
-  `N pilotes: ${{PARAMS.n}} &nbsp;|&nbsp; Solver: ${{PARAMS.solver}}`;
+  `N pilotes: ${{PARAMS.n}} &nbsp;|&nbsp; Solver: ${{PARAMS.solver}}<br>` +
+  `<span style="opacity:.7;font-size:10px;">Ultima ejecucion del algoritmo: ${{PARAMS.generated_at || 'desconocida'}}</span>`;
 document.getElementById('total-row').textContent =
   `Distancia total de recorrido: ${{PARAMS.total_dist.toFixed(2)}} m`;
 

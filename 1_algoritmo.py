@@ -414,12 +414,14 @@ def save_result(piles, sequence, D, T, R, solver_label, output_path):
     else:
         print(f"  ADVERTENCIA: {violations} restriccion(es) violada(s) en la secuencia.")
 
+    from datetime import datetime as _dt
     result = {
         "params": {
             "D": D, "T": T, "R": R, "n": len(sequence),
             "solver": solver_label,
             "total_dist": round(total_dist, 4),
             "violations": violations,
+            "generated_at": _dt.now().strftime("%Y-%m-%d %H:%M"),
         },
         "rows": rows,
     }
