@@ -1,0 +1,121 @@
+name: Generar Secuencia de Pilotaje
+
+on:
+  workflow_dispatch:
+    inputs:
+      estrategia:
+        description: "Estrategia de secuenciacion"
+        required: true
+        default: "sweep_WE"
+        type: choice
+        options:
+          - optimal
+          - sweep_WE
+          - sweep_EW
+          - sweep_SN
+          - sweep_NS
+      start_id:
+        description: "ID del pilote de arranque (dejar vacio para automatico)"
+        required: false
+        default: ""
+      D:
+        description: "Distancia critica entre huecos (metros)"
+        required: false
+        default: "5"
+      T:
+        description: "Tiempo de espera dentro del radio D (dias)"
+        required: false
+        default: "2"
+      R:
+        description: "Ritmo de la maquina (huecos por dia)"
+        required: false
+        default: "2"
+      time_limit:
+        description: "Limite de tiempo para CP-SAT en segundos (solo aplica si estrategia=optimal)"
+        required: false
+        default: "300"
+
+jobs:
+  generar:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt
+
+      - name: Ajustar parametros en 1_algoritmo.py
+        run: |
+          python - <<'PYEOF'
+          import re
+
+          start_id = "${{ github.event.inputs.start_id }}".strip()
+          start_id_val = f'"{start_id}"' if start_id else "None"
+
+          replacements = {
+              r'^(STRATEGY\s*=\s*).*$':    f'STRATEGY    = "${{ github.event.inputs.estrategia }}"',
+              r'^(START_ID\s*=\s*).*$':    f'START_ID    = {start_id_val}',
+              r'^(D\s*=\s*).*$':           f'D           = ${{ github.event.inputs.D }}',
+              r'^(T\s*=\s*).*$':           f'T           = ${{ github.event.inputs.T }}',
+              r'^(R\s*=\s*).*$':           f'R           = ${{ github.event.inputs.R }}',
+              r'^(TIME_LIMIT\s*=\s*).*$':  f'TIME_LIMIT  = ${{ github.event.inputs.time_limit }}',
+              r'^(USE_SAMPLE\s*=\s*).*$':  'USE_SAMPLE  = False',
+          }
+
+          with open("1_algoritmo.py", "r", encoding="utf-8") as f:
+              lines = f.readlines()
+
+          out = []
+          for line in lines:
+              new_line = line
+              for pattern, replacement in replacements.items():
+                  if re.match(pattern, line.strip()):
+                      new_line = replacement + "\n"
+                      break
+              out.append(new_line)
+
+          with open("1_algoritmo.py", "w", encoding="utf-8") as f:
+              f.writelines(out)
+
+          print("Parametros actualizados en 1_algoritmo.py")
+          PYEOF
+
+      - name: Eliminar input() al final (modo no interactivo)
+        run: |
+          python - <<'PYEOF'
+          for fname in ("1_algoritmo.py", "2_html.py"):
+              with open(fname, "r", encoding="utf-8") as f:
+                  content = f.read()
+              content = content.replace('input("\\nPresiona Enter para cerrar...")', 'pass  # CI: no input')
+              content = content.replace("input('\\nPresiona Enter para cerrar...')", 'pass  # CI: no input')
+              with open(fname, "w", encoding="utf-8") as f:
+                  f.write(content)
+          print("input() eliminados para modo CI")
+          PYEOF
+
+      - name: Ejecutar algoritmo (genera resultado_secuencia.json)
+        run: python 1_algoritmo.py
+
+      - name: Ejecutar generador HTML (genera secuencia_pilotaje.html)
+        run: python 2_html.py
+
+      - name: Renombrar HTML como index.html para GitHub Pages
+        run: cp secuencia_pilotaje.html index.html
+
+      - name: Commit y push del HTML generado
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add resultado_secuencia.json secuencia_pilotaje.html index.html
+          git diff --cached --quiet || git commit -m "ci: secuencia generada [${{ github.event.inputs.estrategia }}] $(date -u +'%Y-%m-%d %H:%M UTC')"
+          git push
