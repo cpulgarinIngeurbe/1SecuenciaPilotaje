@@ -121,6 +121,14 @@ def export_html(rows, params, output_path):
                   border-radius: 10px; padding: 1px 7px; font-size: 10px; font-weight: 600; }}
   .no-wait {{ color: #aaa; }}
   .day-card.has-violation .day-header {{ background: #b94040; }}
+  .day-card.short-day .day-header {{ background: #c97600; }}
+  .day-card.short-day.has-violation .day-header {{ background: #b94040; }}
+  .short-badge {{ display: inline-block; background: #ffe3b3; color: #7a3c00;
+                   border-radius: 10px; padding: 1px 8px; font-size: 10px; font-weight: 700;
+                   margin-left: 6px; }}
+  .day-ok-badge {{ display: inline-block; background: #d4f4e2; color: #1a6b3a;
+                   border-radius: 10px; padding: 1px 8px; font-size: 10px; font-weight: 600;
+                   margin-left: 6px; }}
 
   /* Panel derecho: Gantt */
   #crono-right {{ flex: 1; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }}
@@ -213,7 +221,8 @@ def export_html(rows, params, output_path):
         <div id="gantt-legend">
           <div class="leg-item"><div class="leg-box" style="background:#1A5998;"></div> Perforacion</div>
           <div class="leg-item"><div class="leg-box" style="background:rgba(26,89,152,0.22);border:1px solid rgba(26,89,152,0.5);"></div> Periodo de bloqueo</div>
-          <div class="leg-item"><div class="leg-box" style="background:#b42828;"></div> Violacion</div>
+          <div class="leg-item"><div class="leg-box" style="background:#b42828;"></div> Violacion D/T</div>
+          <div class="leg-item"><div class="leg-box" style="background:rgba(255,200,50,0.5);border:1px solid #c97600;"></div> Dia incompleto</div>
         </div>
       </div>
       <div id="gantt-scroll">
@@ -504,7 +513,7 @@ function buildDays() {{
   const days = [];
   [...dayMap.keys()].sort((a,b)=>a-b).forEach(dayNum => {{
     const piles = dayMap.get(dayNum).sort((a,b)=>a.open_day-b.open_day);
-    days.push({{ dayNum, piles, hasViolation: piles.some(p=>!p.ok) }});
+    days.push({{ dayNum, piles, hasViolation: piles.some(p=>!p.ok), shortDay: piles.length < PARAMS.R }});
   }});
   return days;
 }}
@@ -532,16 +541,22 @@ function renderCrono() {{
     const waitTotal = pf.reduce((s,p)=>s+(p.wait||0),0);
 
     const card = document.createElement('div');
-    card.className = 'day-card' + (day.hasViolation?' has-violation':'');
+    card.className = 'day-card' + (day.hasViolation?' has-violation':'') + (day.shortDay?' short-day':'');
     card.dataset.day = day.dayNum;
+
+    const rendBadge = day.hasViolation
+      ? `<span style="background:#f4b3b3;color:#6b0000;border-radius:10px;padding:1px 8px;font-size:10px;font-weight:700;margin-left:6px;">&#9888; VIOLACION D/T</span>`
+      : (day.shortDay
+        ? `<span class="short-badge">&#9888; ${{pf.length}}/${{PARAMS.R}} huecos — DIA INCOMPLETO</span>`
+        : `<span class="day-ok-badge">&#10003; ${{PARAMS.R}}/${{PARAMS.R}} huecos</span>`);
 
     card.innerHTML = `
       <div class="day-header">
         <span class="day-title">Dia ${{day.dayNum}}</span>
         <span class="day-meta">
-          ${{pf.length}} hueco(s) &nbsp;|&nbsp; Dist.: ${{distTotal.toFixed(2)}} m
+          Dist.: ${{distTotal.toFixed(2)}} m
           ${{waitTotal>0 ? ' | Espera: '+waitTotal.toFixed(2)+' d':''}}
-          ${{day.hasViolation ? ' | &#9888; VIOLACION':''}}
+          ${{rendBadge}}
         </span>
       </div>
       <table class="day-table">
@@ -580,9 +595,16 @@ function renderCrono() {{
     container.appendChild(card);
   }});
 
-  const totalDias = buildDays().length;
-  document.getElementById('crono-summary').textContent =
-    `${{totalDias}} dias totales  |  ${{DATA.length}} pilotes  |  Ritmo: ${{PARAMS.R}} huecos/dia`;
+  const allDays = buildDays();
+  const totalDias = allDays.length;
+  const diasCortos = allDays.filter(d=>d.shortDay).length;
+  const diasOk     = totalDias - diasCortos;
+  document.getElementById('crono-summary').innerHTML =
+    `${{totalDias}} dias totales &nbsp;|&nbsp; ${{DATA.length}} pilotes &nbsp;|&nbsp; Ritmo: ${{PARAMS.R}} huecos/dia` +
+    (diasCortos>0
+      ? `<br><span style="color:#c97600;font-weight:700;">&#9888; ${{diasCortos}} dia(s) con rendimiento incompleto</span>` +
+        ` &nbsp;|&nbsp; <span style="color:#1a6b3a;font-weight:600;">&#10003; ${{diasOk}} dias completos</span>`
+      : `<br><span style="color:#1a6b3a;font-weight:600;">&#10003; Todos los dias cumplen el rendimiento de ${{PARAMS.R}} huecos/dia</span>`);
 }}
 
 function highlightCronoCards() {{
@@ -647,12 +669,24 @@ function drawGantt() {{
     gc.fillRect(0, y, W, G.ROW_H);
   }});
 
-  // Columnas de dias (fondo alternado claro)
+  // Construir set de dias con huecos insuficientes
+  const dayCount = new Map();
+  DATA.forEach(d => {{
+    const dn = Math.ceil(d.open_day);
+    dayCount.set(dn, (dayCount.get(dn)||0)+1);
+  }});
+
+  // Columnas de dias (fondo alternado claro; dias incompletos en amarillo)
   for (let day=1; day<=maxDay; day++) {{
-    if (day%2===0) {{
+    const cnt = dayCount.get(day)||0;
+    if (cnt < PARAMS.R) {{
+      gc.fillStyle = 'rgba(255,200,50,0.22)';  // amarillo = dia incompleto
+    }} else if (day%2===0) {{
       gc.fillStyle = 'rgba(200,220,255,0.12)';
-      gc.fillRect(dayToX(day-1), G.HDR_H, G.DAY_W, H-G.HDR_H);
+    }} else {{
+      continue;
     }}
+    gc.fillRect(dayToX(day-1), G.HDR_H, G.DAY_W, H-G.HDR_H);
   }}
 
   // Grid vertical (dias)
@@ -735,9 +769,18 @@ function drawGantt() {{
   // Numeros de dia en cabecera
   for (let day=1; day<=maxDay; day++) {{
     const cx = dayToX(day-1) + G.DAY_W/2;
-    // Resaltar si hay pilote ese dia
-    const hasWork = DATA_BY_RANK.some(d => Math.ceil(d.open_day)===day);
-    gc.fillStyle = hasWork ? '#FFD700' : 'rgba(255,255,255,0.75)';
+    const cnt = dayCount.get(day)||0;
+    const isShort = cnt > 0 && cnt < PARAMS.R;
+    const hasWork = cnt > 0;
+    // Fondo del encabezado: naranja si dia incompleto, amarillo si completo con trabajo
+    if (isShort) {{
+      gc.fillStyle = 'rgba(201,118,0,0.85)';
+      gc.fillRect(dayToX(day-1), 0, G.DAY_W, G.HDR_H);
+    }} else if (hasWork) {{
+      gc.fillStyle = 'rgba(255,215,0,0.25)';
+      gc.fillRect(dayToX(day-1), 0, G.DAY_W, G.HDR_H);
+    }}
+    gc.fillStyle = isShort ? '#fff3d0' : (hasWork ? '#FFD700' : 'rgba(255,255,255,0.75)');
     gc.font = hasWork ? 'bold 10px Segoe UI' : '10px Segoe UI';
     gc.fillText(day, cx, G.HDR_H/2);
   }}
