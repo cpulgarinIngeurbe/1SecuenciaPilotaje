@@ -68,42 +68,57 @@ def load_piles(excel_path, id_col, x_col, y_col):
     return df.dropna().reset_index(drop=True)
 
 
+def _drill(idx, current_time, blocked_until, coords, D, T, time_per_hole):
+    """
+    Perfora el pilote idx y retorna el nuevo current_time (= dia de apertura).
+    Usa la misma logica que simulate_times: open_time = max(current_time,
+    blocked_until[idx]) + time_per_hole, luego bloquea vecinos desde open_time.
+    Si blocked_until[idx] > current_time la maquina espera (idle inevitable).
+    """
+    open_time = max(current_time, blocked_until[idx]) + time_per_hole
+    n = len(coords)
+    for j in range(n):
+        if np.linalg.norm(coords[idx] - coords[j]) < D:
+            blocked_until[j] = max(blocked_until[j], open_time + T)
+    return open_time
+
+
 def greedy_sequence(coords, D, T, R, start_idx=0):
+    """
+    Vecino mas cercano con restriccion de distancia critica.
+    Logica sincronizada con simulate_times: bloquea vecinos desde open_time
+    (despues de perforar), no desde el inicio del slot.
+    La maquina busca el pilote disponible mas cercano en TODA la obra; solo
+    espera si absolutamente todos los pendientes estan bloqueados (caso raro).
+    """
     n = len(coords)
     time_per_hole = 1.0 / R
     visited = [False] * n
     blocked_until = np.zeros(n)
     sequence = [start_idx]
     visited[start_idx] = True
-    current_time = 0.0
 
-    for j in range(n):
-        if np.linalg.norm(coords[start_idx] - coords[j]) < D and j != start_idx:
-            blocked_until[j] = current_time + T
-
-    current_time += time_per_hole
+    current_time = _drill(start_idx, 0.0, blocked_until, coords, D, T, time_per_hole)
 
     while len(sequence) < n:
         unvisited = [i for i in range(n) if not visited[i]]
+
+        # Disponibles = no bloqueados en el momento actual (sin tiempo muerto)
         available = [i for i in unvisited if blocked_until[i] <= current_time]
 
         if not available:
-            next_time = min(blocked_until[i] for i in unvisited)
-            current_time = next_time
-            available = [i for i in unvisited if blocked_until[i] <= current_time]
+            # Todos bloqueados: esperar el minimo indispensable (geometria muy densa)
+            current_time = min(blocked_until[i] for i in unvisited)
+            available = [i for i in unvisited if blocked_until[i] <= current_time + 1e-9]
 
+        # Elegir el disponible mas cercano (puede estar lejos si la zona cercana esta bloqueada)
         last = sequence[-1]
         dists = [np.linalg.norm(coords[last] - coords[i]) for i in available]
         nearest = available[int(np.argmin(dists))]
 
         visited[nearest] = True
         sequence.append(nearest)
-
-        for j in range(n):
-            if not visited[j] and np.linalg.norm(coords[nearest] - coords[j]) < D:
-                blocked_until[j] = max(blocked_until[j], current_time + T)
-
-        current_time += time_per_hole
+        current_time = _drill(nearest, current_time, blocked_until, coords, D, T, time_per_hole)
 
     total = sum(
         np.linalg.norm(coords[sequence[i]] - coords[sequence[i - 1]])
@@ -142,32 +157,25 @@ def sweep_sequence(coords, D, T, R, direction="WE", start_idx=None):
     # Visitar el pilote de arranque fijo primero
     if start_idx is not None:
         sequence.append(start_idx)
-        for j in range(n):
-            if np.linalg.norm(coords[start_idx] - coords[j]) < D and j != start_idx:
-                blocked_until[j] = current_time + T
-        current_time += time_per_hole
+        current_time = _drill(start_idx, 0.0, blocked_until, coords, D, T, time_per_hole)
         sorted_order = [i for i in sorted_order if i != start_idx]
 
     pending = list(sorted_order)
 
     while pending:
+        # Disponibles en el orden de barrido sin tiempo muerto
         available = [i for i in pending if blocked_until[i] <= current_time]
 
         if not available:
-            # Avanzar el tiempo al proximo desbloqueo
+            # Todos bloqueados: esperar minimo indispensable
             current_time = min(blocked_until[i] for i in pending)
-            available = [i for i in pending if blocked_until[i] <= current_time]
+            available = [i for i in pending if blocked_until[i] <= current_time + 1e-9]
 
-        # Tomar el primero disponible en el orden de barrido
+        # Primer disponible en el orden de barrido
         next_pile = available[0]
         pending.remove(next_pile)
         sequence.append(next_pile)
-
-        for j in range(n):
-            if j not in sequence and np.linalg.norm(coords[next_pile] - coords[j]) < D:
-                blocked_until[j] = max(blocked_until[j], current_time + T)
-
-        current_time += time_per_hole
+        current_time = _drill(next_pile, current_time, blocked_until, coords, D, T, time_per_hole)
 
     total = sum(
         np.linalg.norm(coords[sequence[i]] - coords[sequence[i - 1]])
@@ -440,10 +448,10 @@ if __name__ == "__main__":
     print(f"  Limite de tiempo  : {TIME_LIMIT}s")
     strategy_labels = {
         "optimal": "Optimo (CP-SAT / Greedy)",
-        "sweep_WE": "Barrido Oeste → Este",
-        "sweep_EW": "Barrido Este → Oeste",
-        "sweep_SN": "Barrido Sur → Norte",
-        "sweep_NS": "Barrido Norte → Sur",
+        "sweep_WE": "Barrido Oeste - Este",
+        "sweep_EW": "Barrido Este - Oeste",
+        "sweep_SN": "Barrido Sur - Norte",
+        "sweep_NS": "Barrido Norte - Sur",
     }
     if start_idx is None:
         print(f"  Inicio            : automatico (el algoritmo decide)")
