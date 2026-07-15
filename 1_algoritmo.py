@@ -45,8 +45,8 @@ T           = 2
 R           = 2
 TIME_LIMIT  = 300
 USE_SAMPLE  = False
-START_ID    = "T1 P-1"          # Ej: START_ID = "P045"  o  START_ID = 12
-STRATEGY    = "sweep_WE"         # "optimal" | "sweep_WE" | "sweep_EW" | "sweep_SN" | "sweep_NS"
+START_ID    = None               # None = el algoritmo elige el mejor inicio automaticamente
+STRATEGY    = "optimal"          # "optimal" | "sweep_WE" | "sweep_EW" | "sweep_SN" | "sweep_NS"
 RESULTADO   = "resultado_secuencia.json"   # archivo de salida
 # =============================================================================
 
@@ -71,9 +71,8 @@ def load_piles(excel_path, id_col, x_col, y_col):
 def _drill(idx, current_time, blocked_until, coords, D, T, time_per_hole):
     """
     Perfora el pilote idx y retorna el nuevo current_time (= dia de apertura).
-    Usa la misma logica que simulate_times: open_time = max(current_time,
-    blocked_until[idx]) + time_per_hole, luego bloquea vecinos desde open_time.
-    Si blocked_until[idx] > current_time la maquina espera (idle inevitable).
+    open_time = max(current_time, blocked_until[idx]) + time_per_hole.
+    Bloquea vecinos desde open_time (logica identica a simulate_times).
     """
     open_time = max(current_time, blocked_until[idx]) + time_per_hole
     n = len(coords)
@@ -83,13 +82,14 @@ def _drill(idx, current_time, blocked_until, coords, D, T, time_per_hole):
     return open_time
 
 
+
 def greedy_sequence(coords, D, T, R, start_idx=0):
     """
-    Vecino mas cercano con restriccion de distancia critica.
-    Logica sincronizada con simulate_times: bloquea vecinos desde open_time
-    (despues de perforar), no desde el inicio del slot.
-    La maquina busca el pilote disponible mas cercano en TODA la obra; solo
-    espera si absolutamente todos los pendientes estan bloqueados (caso raro).
+    Vecino mas cercano con criterio anti-idle:
+    - Busca pilote disponible en TODA la obra (no solo la zona cercana).
+    - Prefiere el que bloquee menos pilotes disponibles para evitar quedar
+      sin opciones en el proximo turno. Desempate: distancia minima.
+    - Solo espera si absolutamente TODOS los pendientes estan bloqueados.
     """
     n = len(coords)
     time_per_hole = 1.0 / R
@@ -99,32 +99,32 @@ def greedy_sequence(coords, D, T, R, start_idx=0):
     visited[start_idx] = True
 
     current_time = _drill(start_idx, 0.0, blocked_until, coords, D, T, time_per_hole)
+    open_times = [current_time]
 
     while len(sequence) < n:
         unvisited = [i for i in range(n) if not visited[i]]
-
-        # Disponibles = no bloqueados en el momento actual (sin tiempo muerto)
         available = [i for i in unvisited if blocked_until[i] <= current_time]
 
         if not available:
-            # Todos bloqueados: esperar el minimo indispensable (geometria muy densa)
+            # Todos bloqueados: esperar el minimo indispensable
             current_time = min(blocked_until[i] for i in unvisited)
             available = [i for i in unvisited if blocked_until[i] <= current_time + 1e-9]
 
-        # Elegir el disponible mas cercano (puede estar lejos si la zona cercana esta bloqueada)
+        # Elegir el disponible mas cercano
         last = sequence[-1]
         dists = [np.linalg.norm(coords[last] - coords[i]) for i in available]
-        nearest = available[int(np.argmin(dists))]
+        chosen = available[int(np.argmin(dists))]
 
-        visited[nearest] = True
-        sequence.append(nearest)
-        current_time = _drill(nearest, current_time, blocked_until, coords, D, T, time_per_hole)
+        visited[chosen] = True
+        sequence.append(chosen)
+        current_time = _drill(chosen, current_time, blocked_until, coords, D, T, time_per_hole)
+        open_times.append(current_time)
 
     total = sum(
         np.linalg.norm(coords[sequence[i]] - coords[sequence[i - 1]])
         for i in range(1, n)
     )
-    return sequence, total
+    return sequence, total, open_times
 
 
 def sweep_sequence(coords, D, T, R, direction="WE", start_idx=None):
@@ -184,13 +184,34 @@ def sweep_sequence(coords, D, T, R, direction="WE", start_idx=None):
     return sequence, total
 
 
+def _count_idle(seq, coords, D, T, R):
+    """Cuenta dias con menos huecos que R (0 = sin idle, 1 = teorico minimo para n impar)."""
+    import math as _math
+    times = simulate_times(seq, coords, D, T, R)
+    from collections import Counter as _Counter
+    by_day = _Counter(_math.ceil(t) for t in times)
+    last_day = max(by_day)
+    return sum(1 for d in range(1, last_day + 1) if by_day.get(d, 0) < R)
+
+
 def best_greedy(coords, D, T, R):
+    """
+    Prueba todos los puntos de inicio y elige el que minimice dias con idle
+    (dias con menos de R huecos, incluyendo dias completamente vacios).
+    Desempate: menor distancia total de recorrido.
+    """
+    import math as _math
     n = len(coords)
-    best_seq, best_dist = None, np.inf
+    best_seq, best_dist, best_idle = None, np.inf, np.inf
     for s in range(n):
-        seq, dist = greedy_sequence(coords, D, T, R, start_idx=s)
-        if dist < best_dist:
-            best_seq, best_dist = seq, dist
+        seq, dist, open_times = greedy_sequence(coords, D, T, R, start_idx=s)
+        # Contar idle directamente de open_times (sin llamada extra a simulate_times)
+        from collections import Counter as _Counter
+        by_day = _Counter(_math.ceil(t) for t in open_times)
+        last_day = max(by_day)
+        idle = sum(1 for d in range(1, last_day + 1) if by_day.get(d, 0) < R)
+        if (idle, dist) < (best_idle, best_dist):
+            best_seq, best_dist, best_idle = seq, dist, idle
     return best_seq, best_dist
 
 
@@ -464,7 +485,7 @@ if __name__ == "__main__":
         print("[1/2] Calculando solucion greedy inicial...")
         t0 = time.time()
         if start_idx is not None:
-            greedy_seq, greedy_dist = greedy_sequence(coords, D, T, R, start_idx=start_idx)
+            greedy_seq, greedy_dist, _ = greedy_sequence(coords, D, T, R, start_idx=start_idx)
         else:
             greedy_seq, greedy_dist = best_greedy(coords, D, T, R)
         print(f"      Distancia greedy: {greedy_dist:.2f} m  ({time.time()-t0:.1f}s)")
